@@ -29,7 +29,9 @@
 
 use std::cell::UnsafeCell;
 
-use crook_plugin_api::{ABI_VERSION, Answer, Capability, Manifest, Node, from_bytes, to_bytes};
+use crook_plugin_api::{
+    ABI_VERSION, Answer, Capability, Manifest, Node, Render, from_bytes, to_bytes,
+};
 
 pub mod format;
 pub mod state;
@@ -142,9 +144,14 @@ pub fn manifest() -> Manifest {
         name: String::from("Markdown"),
         description: String::from("A command and its output, as Markdown ready to paste."),
         version: String::from(env!("CARGO_PKG_VERSION")),
-        // Two, and they are the whole of what this does: read the command it
-        // was run on, and put text on the clipboard. No network, no files.
-        capabilities: vec![Capability::ReadBlock, Capability::Clipboard],
+        // Three, and they are the whole of what this does. No network, no
+        // files: nothing it copies can leave the machine, and it could not
+        // send it anywhere if it wanted to.
+        capabilities: vec![
+            Capability::ReadBlock,
+            Capability::ReadWorkingDirectory,
+            Capability::Clipboard,
+        ],
     }
 }
 
@@ -163,23 +170,33 @@ pub extern "C" fn crook_build() -> i32 {
     0
 }
 
-/// What to draw in one slot.
+/// What to draw, and what it is being drawn for.
+///
+/// The render carries a [`Render`] rather than a slot name, and for this
+/// plugin that *is* the feature: its subject is the command whose menu is
+/// open, so what it draws — and what a press a moment later is about — comes
+/// in through here.
 #[unsafe(no_mangle)]
-pub extern "C" fn crook_render(slot: i32, length: i32) -> i64 {
+pub extern "C" fn crook_render(render: i32, length: i32) -> i64 {
     // SAFETY: the host allocated and wrote this before calling in.
-    let slot = unsafe { take(slot, length) };
-    let tree = match std::str::from_utf8(&slot) {
-        Ok(state::SLOT) => view::menu(),
-        // A slot this plugin does not contribute to, which cannot happen and
-        // is drawn as nothing rather than guessed at.
-        _ => Node::Empty,
+    let bytes = unsafe { take(render, length) };
+    let tree = match from_bytes::<Render>(&bytes) {
+        Ok(render) => plugin().render(&render),
+        // A render this build cannot read is a host speaking a version this
+        // one does not, which the ABI check should already have caught.
+        Err(_) => Node::Empty,
     };
     hand_back(to_bytes(&tree).unwrap_or_default())
 }
 
 /// Runs one of the actions registered while building.
+///
+/// The argument is what the thing that was pressed had to say. Both entries
+/// here are about the block their menu is open on rather than about anything
+/// they were handed, so it is read and ignored — deliberately, and written
+/// down here so the next person does not go looking for what it was for.
 #[unsafe(no_mangle)]
-pub extern "C" fn crook_run(name: i32, length: i32) -> i32 {
+pub extern "C" fn crook_run(name: i32, length: i32, _argument: i32, _argument_len: i32) -> i32 {
     // SAFETY: as above.
     let name = unsafe { take(name, length) };
     match std::str::from_utf8(&name) {
@@ -222,6 +239,7 @@ mod tests {
             sentences,
             vec![
                 String::from("Read the command you run it on, and what it printed"),
+                String::from("See which project each tab is in"),
                 String::from("Read and change your clipboard"),
             ]
         );
@@ -241,13 +259,33 @@ mod tests {
 
         assert_eq!(
             keys,
-            vec![String::from("block.read"), String::from("clipboard")]
+            vec![
+                String::from("block.read"),
+                String::from("cwd.read"),
+                String::from("clipboard"),
+            ]
         );
     }
 
     #[test]
     fn the_only_slot_it_draws_in_is_the_one_it_contributed_to() {
-        assert_ne!(view::menu(), Node::Empty);
-        assert_eq!(state::SLOT, "block.menu");
+        let mut plugin = state::Markdown::new();
+        let drawn = plugin.render(&Render {
+            slot: String::from(state::SLOT),
+            entry: String::from("markdown"),
+            subject: None,
+        });
+        assert_ne!(drawn, Node::Empty);
+
+        let elsewhere = plugin.render(&Render {
+            slot: String::from("header.right"),
+            entry: String::from("markdown"),
+            subject: None,
+        });
+        assert_eq!(
+            elsewhere,
+            Node::Empty,
+            "asked about a slot it never contributed to, it drew something"
+        );
     }
 }

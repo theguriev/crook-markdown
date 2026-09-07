@@ -10,7 +10,7 @@
 //! this file exists: the formatting is the part with rules in it, so it is a
 //! plain module `cargo test` runs on an ordinary machine.
 
-use crook_plugin_api::Answer;
+use crook_plugin_api::BlockFacts;
 
 /// The language a console fence is tagged with.
 ///
@@ -18,58 +18,6 @@ use crook_plugin_api::Answer;
 /// it is a prompt, a command and its output, which is what every renderer that
 /// knows the tag highlights it as.
 const FENCE_LANGUAGE: &str = "console";
-
-/// The block a plugin was run on, as much of it as it was told.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Block {
-    /// The command line, as it was submitted or echoed.
-    pub command: Option<String>,
-    /// What it printed, without the prompt or the line it was typed on.
-    pub output: Option<String>,
-    /// The status the shell reported.
-    pub exit: Option<i32>,
-    /// Where the shell was when the command started.
-    pub directory: Option<String>,
-    /// The branch that directory was on.
-    pub branch: Option<String>,
-}
-
-impl Block {
-    /// The block an [`Answer::Block`] describes, or `None` for any other
-    /// answer.
-    pub fn of(answer: &Answer) -> Option<Self> {
-        match answer {
-            Answer::Block {
-                command,
-                output,
-                exit,
-                directory,
-                branch,
-            } => Some(Self {
-                command: command.clone(),
-                output: output.clone(),
-                exit: *exit,
-                directory: directory.clone(),
-                branch: branch.clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Whether there is anything here worth putting on a clipboard.
-    ///
-    /// A block with neither a command nor any output is what a shell with no
-    /// integration leaves behind, and copying an empty fence would be a menu
-    /// entry that silently replaces whatever somebody had copied before.
-    pub fn is_empty(&self) -> bool {
-        self.command
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
-            && self.output.as_deref().unwrap_or_default().trim().is_empty()
-    }
-}
 
 /// Which of the two shapes an entry asks for.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -80,29 +28,48 @@ pub enum Shape {
     Report,
 }
 
-/// One block as Markdown.
-pub fn markdown(block: &Block, shape: Shape) -> String {
+/// One command and what it printed, as Markdown.
+///
+/// `block` is what the plugin was told about the command — `None` when it was
+/// told nothing, which is a plugin nobody has granted a sight of one yet — and
+/// `output` is what came back from the one thing it has to ask for.
+pub fn markdown(block: Option<&BlockFacts>, output: &str, shape: Shape) -> String {
+    if command(block).is_none() && output.trim().is_empty() {
+        // Nothing to copy: a shell with no integration leaves a block with
+        // neither a command nor any output, and an empty fence on somebody's
+        // clipboard is worse than nothing happening.
+        return String::new();
+    }
     match shape {
-        Shape::Fenced => fenced(block),
-        Shape::Report => report(block),
+        Shape::Fenced => fenced(block, output),
+        Shape::Report => report(block, output),
     }
 }
 
+/// The command line, when the plugin was told one.
+fn command(block: Option<&BlockFacts>) -> Option<&str> {
+    let ran = block?.ran.as_ref()?;
+    let command = ran.command.as_deref()?.trim();
+    (!command.is_empty()).then_some(command)
+}
+
 /// The command and its output, in one console fence.
-fn fenced(block: &Block) -> String {
-    let fence = fence_for(block);
+fn fenced(block: Option<&BlockFacts>, output: &str) -> String {
+    let command = command(block);
+    let fence = fence_for(command, output);
     let mut text = String::new();
     text.push_str(&fence);
     text.push_str(FENCE_LANGUAGE);
     text.push('\n');
-    if let Some(command) = trimmed(&block.command) {
+    if let Some(command) = command {
         // With the prompt, because a `console` fence without one is a fence
         // where the command and the first line of output look the same.
         text.push_str("$ ");
         text.push_str(command);
         text.push('\n');
     }
-    if let Some(output) = trimmed(&block.output) {
+    let output = output.trim_end();
+    if !output.trim().is_empty() {
         text.push_str(output);
         text.push('\n');
     }
@@ -112,19 +79,23 @@ fn fenced(block: &Block) -> String {
 }
 
 /// The same, with what somebody reading a bug report asks for around it.
-fn report(block: &Block) -> String {
+fn report(block: Option<&BlockFacts>, output: &str) -> String {
     let mut text = String::new();
 
-    if let Some(command) = trimmed(&block.command) {
+    if let Some(command) = command(block) {
         text.push_str("### `");
         text.push_str(command);
         text.push_str("`\n\n");
     }
 
     // One sentence, made of whatever was known. A shell that reported none of
-    // it contributes no sentence rather than a line of "unknown, unknown".
+    // it — or a plugin that was granted none of it — contributes no sentence
+    // rather than a line of "unknown, unknown".
     let mut said = String::new();
-    match block.exit {
+    match block
+        .and_then(|block| block.ran.as_ref())
+        .and_then(|ran| ran.exit)
+    {
         Some(0) => said.push_str("Succeeded"),
         Some(status) => {
             said.push_str("Exited ");
@@ -132,22 +103,22 @@ fn report(block: &Block) -> String {
         }
         None => {}
     }
-    if let Some(directory) = trimmed(&block.directory) {
+    if let Some(place) = block.and_then(|block| block.place.as_ref()) {
         said.push_str(if said.is_empty() { "Ran in `" } else { " in `" });
-        said.push_str(directory);
+        said.push_str(&place.directory);
         said.push('`');
-    }
-    if let Some(branch) = trimmed(&block.branch) {
-        said.push_str(if said.is_empty() { "On `" } else { " on `" });
-        said.push_str(branch);
-        said.push('`');
+        if let Some(branch) = place.branch.as_deref() {
+            said.push_str(" on `");
+            said.push_str(branch);
+            said.push('`');
+        }
     }
     if !said.is_empty() {
         text.push_str(&said);
         text.push_str(".\n\n");
     }
 
-    text.push_str(&fenced(block));
+    text.push_str(&fenced(block, output));
     text
 }
 
@@ -157,10 +128,9 @@ fn report(block: &Block) -> String {
 /// Three is the ordinary answer. Anything else is output that itself contains
 /// a fence — a command that printed a README, a `git show` of one — and a
 /// three-backtick fence around it ends in the middle of somebody's document.
-fn fence_for(block: &Block) -> String {
-    let longest = [block.command.as_deref(), block.output.as_deref()]
+fn fence_for(command: Option<&str>, output: &str) -> String {
+    let longest = [command.unwrap_or_default(), output]
         .into_iter()
-        .flatten()
         .map(longest_backtick_run)
         .max()
         .unwrap_or(0);
@@ -180,12 +150,6 @@ fn longest_backtick_run(text: &str) -> usize {
         }
     }
     longest
-}
-
-/// A field with something in it, trimmed of the blank rows a terminal leaves.
-fn trimmed(field: &Option<String>) -> Option<&str> {
-    let text = field.as_deref()?.trim_end();
-    (!text.trim().is_empty()).then_some(text)
 }
 
 #[cfg(test)]

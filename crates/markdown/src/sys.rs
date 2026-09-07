@@ -138,6 +138,12 @@ pub mod stub {
         ASKED.with(|asked| std::mem::take(&mut *asked.borrow_mut()))
     }
 
+    /// The most recent ticket handed out, and what it was for — without
+    /// clearing anything, so a test can ask for it and still read the rest.
+    pub fn last_ticket() -> Option<(i32, Request)> {
+        ASKED.with(|asked| asked.borrow().requests.last().cloned())
+    }
+
     /// Forgets everything, including the tickets handed out.
     pub fn forget() {
         let _ = taken();
