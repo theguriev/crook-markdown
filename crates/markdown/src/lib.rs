@@ -38,6 +38,12 @@ pub mod state;
 pub mod sys;
 pub mod view;
 
+// The plugin's face, and what it looks like, for the Plugins page and the
+// Store. Inside the module rather than beside it, for the reason a plugin is
+// one file: what says what the plugin is travels with it. Custom sections,
+// not data — they cost no memory and no fuel.
+crook_plugin_api::icon!("../../../assets/icon.png");
+
 use state::Markdown;
 
 /// A `static` that is only ever touched by one thread, which on wasm32 is
@@ -223,6 +229,13 @@ pub extern "C" fn crook_deliver(ticket: i32, bytes: i32, length: i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pictures_in_the_module_are_pngs() {
+        // A wrong path fails at compile time; a wrong file fails here, on the
+        // machine that runs the tests, rather than on the Plugins page.
+        assert!(CROOK_ICON.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
 
     #[test]
     fn the_manifest_says_what_it_needs_in_sentences_a_person_can_refuse() {
