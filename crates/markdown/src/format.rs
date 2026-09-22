@@ -83,9 +83,9 @@ fn report(block: Option<&BlockFacts>, output: &str) -> String {
     let mut text = String::new();
 
     if let Some(command) = command(block) {
-        text.push_str("### `");
-        text.push_str(command);
-        text.push_str("`\n\n");
+        text.push_str("### ");
+        text.push_str(&code_span(&heading(command)));
+        text.push_str("\n\n");
     }
 
     // One sentence, made of whatever was known. A shell that reported none of
@@ -104,13 +104,11 @@ fn report(block: Option<&BlockFacts>, output: &str) -> String {
         None => {}
     }
     if let Some(place) = block.and_then(|block| block.place.as_ref()) {
-        said.push_str(if said.is_empty() { "Ran in `" } else { " in `" });
-        said.push_str(&place.directory);
-        said.push('`');
+        said.push_str(if said.is_empty() { "Ran in " } else { " in " });
+        said.push_str(&code_span(&place.directory));
         if let Some(branch) = place.branch.as_deref() {
-            said.push_str(" on `");
-            said.push_str(branch);
-            said.push('`');
+            said.push_str(" on ");
+            said.push_str(&code_span(branch));
         }
     }
     if !said.is_empty() {
@@ -120,6 +118,35 @@ fn report(block: Option<&BlockFacts>, output: &str) -> String {
 
     text.push_str(&fenced(block, output));
     text
+}
+
+/// What of a command fits on a heading's one line.
+///
+/// The first line, and an ellipsis when there was more: a heredoc or a `for`
+/// loop is several lines, a heading ends at the first of them, and the rest
+/// of the command is in the fence under it anyway.
+fn heading(command: &str) -> String {
+    let mut lines = command.lines();
+    let first = lines.next().unwrap_or_default().trim_end();
+    match lines.any(|line| !line.trim().is_empty()) {
+        true => format!("{first}\u{2026}"),
+        false => String::from(first),
+    }
+}
+
+/// `text` as an inline code span that ends where it should.
+///
+/// The span's own backticks outnumber any run of them inside it — the rule
+/// [`fence_for`] follows for a fence — so ``echo `date` `` stays one span
+/// rather than closing after `echo`. A backtick at either end is kept off the
+/// delimiter by a space, which a renderer strips.
+fn code_span(text: &str) -> String {
+    let ticks = "`".repeat(longest_backtick_run(text) + 1);
+    let pad = match text.starts_with('`') || text.ends_with('`') {
+        true => " ",
+        false => "",
+    };
+    format!("{ticks}{pad}{text}{pad}{ticks}")
 }
 
 /// The fence to use, which is longer than the longest run of backticks in what

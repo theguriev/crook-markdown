@@ -139,3 +139,59 @@ fn a_block_with_neither_a_command_nor_any_output_is_nothing_to_copy() {
     );
     assert!(!markdown(Some(&block()), OUTPUT, Shape::Fenced).is_empty());
 }
+
+#[test]
+fn a_heading_holds_a_command_with_backticks_in_one_code_span() {
+    // A single backtick either side would close the span after `echo`, and
+    // leave "date``" as loose text on the heading. The spaces inside the
+    // double backticks are stripped by a renderer, both or neither.
+    let quoting = BlockFacts {
+        ran: Some(Ran {
+            command: Some(String::from("echo `date`")),
+            exit: Some(0),
+        }),
+        ..block()
+    };
+
+    assert!(
+        markdown(Some(&quoting), OUTPUT, Shape::Report).starts_with("### `` echo `date` ``\n\n"),
+        "{}",
+        markdown(Some(&quoting), OUTPUT, Shape::Report)
+    );
+}
+
+#[test]
+fn a_heading_holds_the_first_line_of_a_command_that_has_several() {
+    // A heading is one line. The whole command is still in the fence.
+    let looping = BlockFacts {
+        ran: Some(Ran {
+            command: Some(String::from("for f in *.rs; do\n  wc -l \"$f\"\ndone")),
+            exit: Some(0),
+        }),
+        ..block()
+    };
+    let text = markdown(Some(&looping), OUTPUT, Shape::Report);
+
+    assert!(
+        text.starts_with("### `for f in *.rs; do\u{2026}`\n\n"),
+        "{text}"
+    );
+    assert!(text.contains("$ for f in *.rs; do\n  wc -l \"$f\"\ndone\n"));
+}
+
+#[test]
+fn a_place_with_a_backtick_in_it_stays_one_code_span() {
+    let odd = BlockFacts {
+        place: Some(Place {
+            directory: String::from("/tmp/a`b"),
+            branch: Some(String::from("main")),
+            worktree: false,
+        }),
+        ..block()
+    };
+
+    assert!(
+        markdown(Some(&odd), OUTPUT, Shape::Report)
+            .contains("Succeeded in ``/tmp/a`b`` on `main`.")
+    );
+}
