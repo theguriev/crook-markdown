@@ -89,15 +89,15 @@ asked for.
 | `crates/markdown/src/format.rs` | What a block reads as. The part with rules in it, and the part with the tests. |
 | `crates/markdown/src/view.rs` | Two labels, and which of them is worth offering for this command. No padding, no type size, no colour — Crook draws them as rows of its own menu. |
 | `crates/markdown/src/sys.rs` | The imports, and the stubs that stand in for them off wasm. |
-| `crates/crook_plugin_api` | A **copy** of Crook's own wire crate, vendored. `ABI_VERSION` is what keeps the two honest. |
 
 The plugin describes two entries and never says what a menu row looks like. That is the bargain
 the whole tier is built on: a plugin that described its own padding would be wrong in a theme it
 was never opened in, and wrong again the day the menu changes.
 
-It is built against **plugin API 7**, which is the version that hands a plugin the command a
-menu is open on. A Crook older than that refuses it by number, at load, with a line saying which
-version each side speaks.
+It is built against **plugin API 8** — the published `crook_plugin_api` crate from crates.io,
+versioned `0.<abi>.<patch>`, so the `0.8` in `Cargo.toml` is the number. The command a menu is open
+on has been handed to a plugin since API 7. A Crook that speaks any other number, older or newer,
+refuses it by number, at load, with a line saying which version each side speaks.
 
 ## Releasing
 
