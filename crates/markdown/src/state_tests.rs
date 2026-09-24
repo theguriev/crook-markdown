@@ -208,14 +208,46 @@ fn a_block_with_nothing_in_it_replaces_nobody_s_clipboard() {
 
 #[test]
 fn an_answer_to_a_ticket_nobody_is_waiting_on_is_ignored() {
+    // With both entries still waiting, because that is when it matters: the
+    // host answers the Copy a plugin asks for with a ticket of its own, and
+    // a plugin that took the next answer for whichever entry was waiting
+    // would spend a waiting entry on it. Asked with nothing waiting, every
+    // way of matching answers to tickets ignores it — including none at all.
     let mut plugin = drawn("cargo test");
+    plugin.run(FENCED);
+    let (fenced_ticket, _) = stub::last_ticket().expect("a ticket");
+    plugin.run(REPORT);
+    let (report_ticket, _) = stub::last_ticket().expect("a ticket");
+    let _ = stub::taken();
 
+    let nobodys = fenced_ticket.max(report_ticket) + 100;
     plugin.deliver(
-        404,
+        nobodys,
         Answer::Output {
             text: String::from("ok"),
         },
     );
+    assert!(
+        stub::taken().requests.is_empty(),
+        "an answer nobody asked for was copied"
+    );
 
-    assert!(stub::taken().requests.is_empty());
+    // And both entries are still waiting for their own.
+    for ticket in [fenced_ticket, report_ticket] {
+        plugin.deliver(
+            ticket,
+            Answer::Output {
+                text: String::from("ok"),
+            },
+        );
+    }
+    let copies = stub::taken()
+        .requests
+        .into_iter()
+        .filter(|(_, request)| matches!(request, Request::Copy { .. }))
+        .count();
+    assert_eq!(
+        copies, 2,
+        "an entry lost its answer to one nobody asked for"
+    );
 }
